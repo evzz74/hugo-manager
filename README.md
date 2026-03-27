@@ -9,6 +9,7 @@
 - 文章数量和主题数量统计
 - 快速操作：浏览器打开站点、启动 Hugo Server、构建站点
 - 一键切换项目目录
+- **自定义 Hugo 路径**：可手动指定 hugo.exe 位置（无需系统 PATH）
 
 ### 文章管理
 - 文章列表，支持分页浏览和关键词搜索（标题/分类/标签）
@@ -32,7 +33,7 @@
 
 ## 安全特性
 
-- **命令执行防护**：Hugo 可执行文件仅从系统 PATH 查找，且必须为绝对路径，防止项目目录下的恶意二进制劫持
+- **命令执行防护**：Hugo 可执行文件仅从系统 PATH 查找或用户指定路径，且必须为绝对路径
 - **路径遍历防护**：所有文件操作通过 `canonicalize` + `starts_with` 校验路径归属
 - **Frontmatter 注入防护**：用户输入经 TOML 转义处理，过滤引号、换行和控制字符
 - **删除操作防护**：删除前校验路径在 `content/` 或 `themes/` 目录内
@@ -44,7 +45,7 @@
 ## 系统要求
 
 - Rust 1.70+
-- Hugo 已安装并添加到系统 PATH
+- Hugo（可通过 Dashboard 手动指定路径，或添加到系统 PATH）
 - Windows 10+ （当前仅支持 Windows，中文字体自动加载）
 
 ## 安装
@@ -67,6 +68,13 @@ cargo run --release
 
 1. 在 Hugo 博客项目目录下运行程序，自动检测 `hugo.yaml` / `hugo.toml` / `config.yaml` / `config.toml`
 2. 或通过 Dashboard 的 "Change..." 按钮手动选择项目目录
+
+### 配置 Hugo 路径
+
+1. 在 Dashboard 的 **Project Overview** 中找到 **Hugo Path** 配置项
+2. 点击 **Browse...** 选择 hugo.exe 文件
+3. 路径会自动保存到 `config/settings.json`
+4. 点击 **Clear** 可清除自定义路径，恢复使用系统 PATH
 
 ### 文章管理
 
@@ -95,6 +103,8 @@ cargo run --release
 hugo-manager/
 ├── Cargo.toml
 ├── README.md
+├── config/
+│   └── settings.json      # 应用配置（Hugo 路径、项目路径）
 ├── src/
 │   ├── main.rs          # 程序入口、字体配置
 │   ├── app.rs           # 主应用逻辑和全部 UI
@@ -122,8 +132,8 @@ hugo-manager/
 
 - 文章使用 TOML frontmatter 格式（`+++` 分隔符）
 - 配置文件仅支持 YAML 格式的读写，TOML 配置会使用默认值
-- Hugo 必须在系统 PATH 中可用（不会使用项目目录中的 hugo.exe）
 - 删除操作移至系统回收站，不会永久删除
+- `config/settings.json` 保存应用配置（Hugo 路径、项目路径）
 
 ## 许可证
 

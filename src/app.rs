@@ -1,13 +1,14 @@
 use eframe::egui;
 use std::path::PathBuf;
 
-use crate::models::{
-    article::ArticleManager, config::HugoConfig, theme::ThemeManager,
-};
+use crate::models::{article::ArticleManager, config::HugoConfig, theme::ThemeManager};
 
 pub struct HugoApp {
     // Project paths
     project_path: PathBuf,
+
+    // App settings
+    hugo_path: String,
 
     // Managers
     config: HugoConfig,
@@ -60,7 +61,11 @@ struct EditingArticle {
 
 impl HugoApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let project_path = Self::find_hugo_project()
+        let (hugo_path, saved_project_path) = Self::load_app_settings();
+
+        let project_path = saved_project_path
+            .filter(|p| p.exists())
+            .or_else(Self::find_hugo_project)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
         let config = HugoConfig::load(&project_path).unwrap_or_default();
@@ -69,6 +74,7 @@ impl HugoApp {
 
         Self {
             project_path,
+            hugo_path,
             config,
             article_manager,
             theme_manager,
@@ -110,6 +116,45 @@ impl HugoApp {
         None
     }
 
+    fn load_app_settings() -> (String, Option<PathBuf>) {
+        let settings_path = PathBuf::from("config/settings.json");
+        if settings_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&settings_path) {
+                if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let hugo_path = settings
+                        .get("hugo_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let project_path = settings
+                        .get("project_path")
+                        .and_then(|v| v.as_str())
+                        .map(|s| PathBuf::from(s));
+                    return (hugo_path, project_path);
+                }
+            }
+        }
+        (String::new(), None)
+    }
+
+    fn save_app_settings(&self) {
+        let config_dir = PathBuf::from("config");
+        if let Err(e) = std::fs::create_dir_all(&config_dir) {
+            eprintln!("Failed to create config dir: {}", e);
+            return;
+        }
+
+        let settings_path = config_dir.join("settings.json");
+        let settings = serde_json::json!({
+            "hugo_path": self.hugo_path,
+            "project_path": self.project_path.to_string_lossy()
+        });
+
+        if let Err(e) = std::fs::write(&settings_path, settings.to_string()) {
+            eprintln!("Failed to save settings: {}", e);
+        }
+    }
+
     fn card_frame(ui: &egui::Ui) -> egui::Frame {
         egui::Frame::default()
             .inner_margin(16.0)
@@ -129,12 +174,39 @@ impl HugoApp {
 
             ui.horizontal(|ui| {
                 ui.label("Project Path:");
-                ui.label(
-                    egui::RichText::new(self.project_path.display().to_string())
-                        .monospace(),
-                );
+                ui.label(egui::RichText::new(self.project_path.display().to_string()).monospace());
                 if ui.button("Change...").clicked() {
                     self.select_project_path();
+                }
+            });
+
+            ui.add_space(6.0);
+
+            ui.horizontal(|ui| {
+                ui.label("Hugo Path:");
+                let display_path = if self.hugo_path.is_empty() {
+                    "Using system PATH".to_string()
+                } else {
+                    self.hugo_path.clone()
+                };
+                ui.label(egui::RichText::new(display_path).monospace());
+                if ui.button("Browse...").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Select Hugo Executable")
+                        .add_filter("Executable", &["exe"])
+                        .pick_file()
+                    {
+                        self.hugo_path = path.display().to_string();
+                        self.save_app_settings();
+                        self.status_message = "Hugo path updated".to_string();
+                    }
+                }
+                if !self.hugo_path.is_empty() {
+                    if ui.button("Clear").clicked() {
+                        self.hugo_path.clear();
+                        self.save_app_settings();
+                        self.status_message = "Hugo path cleared, using system PATH".to_string();
+                    }
                 }
             });
 
@@ -153,9 +225,7 @@ impl HugoApp {
                     ui.end_row();
 
                     ui.label("Base URL:");
-                    ui.label(
-                        egui::RichText::new(&self.config.base_url).monospace(),
-                    );
+                    ui.label(egui::RichText::new(&self.config.base_url).monospace());
                     ui.end_row();
                 });
         });
@@ -171,12 +241,10 @@ impl HugoApp {
                 Self::card_frame(ui).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
-                            egui::RichText::new(
-                                self.article_manager.articles.len().to_string(),
-                            )
-                            .size(28.0)
-                            .strong()
-                            .color(egui::Color32::from_rgb(59, 130, 246)),
+                            egui::RichText::new(self.article_manager.articles.len().to_string())
+                                .size(28.0)
+                                .strong()
+                                .color(egui::Color32::from_rgb(59, 130, 246)),
                         );
                         ui.label(egui::RichText::new("Articles").size(15.0));
                     });
@@ -233,20 +301,18 @@ impl HugoApp {
                     }
                 }
 
-                let server_btn = egui::Button::new(
-                    egui::RichText::new("\u{26A1}  Hugo Server").color(white),
-                )
-                .fill(blue)
-                .rounding(btn_rounding);
+                let server_btn =
+                    egui::Button::new(egui::RichText::new("\u{26A1}  Hugo Server").color(white))
+                        .fill(blue)
+                        .rounding(btn_rounding);
                 if ui.add(server_btn).clicked() {
                     self.start_hugo_server();
                 }
 
-                let build_btn = egui::Button::new(
-                    egui::RichText::new("\u{1F528}  Build Site").color(white),
-                )
-                .fill(blue)
-                .rounding(btn_rounding);
+                let build_btn =
+                    egui::Button::new(egui::RichText::new("\u{1F528}  Build Site").color(white))
+                        .fill(blue)
+                        .rounding(btn_rounding);
                 if ui.add(build_btn).clicked() {
                     self.build_site();
                 }
@@ -275,7 +341,9 @@ impl HugoApp {
                 .filter(|a| {
                     a.title.to_lowercase().contains(&search_lower)
                         || a.categories.to_lowercase().contains(&search_lower)
-                        || a.tags.iter().any(|t| t.to_lowercase().contains(&search_lower))
+                        || a.tags
+                            .iter()
+                            .any(|t| t.to_lowercase().contains(&search_lower))
                 })
                 .collect()
         };
@@ -316,12 +384,11 @@ impl HugoApp {
                         ui.add_space(6.0);
 
                         // "+ New Article" primary button
-                        let new_btn = egui::Button::new(
-                            egui::RichText::new("+ New Article").color(white),
-                        )
-                        .fill(blue)
-                        .rounding(btn_rounding)
-                        .min_size(egui::vec2(120.0, 30.0));
+                        let new_btn =
+                            egui::Button::new(egui::RichText::new("+ New Article").color(white))
+                                .fill(blue)
+                                .rounding(btn_rounding)
+                                .min_size(egui::vec2(120.0, 30.0));
                         if ui.add(new_btn).clicked() {
                             self.editing_article = Some(EditingArticle {
                                 title: String::new(),
@@ -359,7 +426,8 @@ impl HugoApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = col_gap;
-                    let header_labels = ["Title", "Date", "Categories", "Tags", "Status", "Actions"];
+                    let header_labels =
+                        ["Title", "Date", "Categories", "Tags", "Status", "Actions"];
                     for (j, label) in header_labels.iter().enumerate() {
                         ui.allocate_ui(egui::vec2(cw[j], header_h), |ui| {
                             ui.set_min_size(egui::vec2(cw[j], header_h));
@@ -408,36 +476,48 @@ impl HugoApp {
                                         // Title
                                         ui.allocate_ui(egui::vec2(cw[0], row_h), |ui| {
                                             ui.set_min_size(egui::vec2(cw[0], row_h));
-                                            ui.add(egui::Label::new(
-                                                egui::RichText::new(&article.title).strong(),
-                                            ).truncate());
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(&article.title).strong(),
+                                                )
+                                                .truncate(),
+                                            );
                                         });
                                         // Date
                                         ui.allocate_ui(egui::vec2(cw[1], row_h), |ui| {
                                             ui.set_min_size(egui::vec2(cw[1], row_h));
-                                            ui.add(egui::Label::new(
-                                                egui::RichText::new(&article.date)
-                                                    .small()
-                                                    .color(weak),
-                                            ).truncate());
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(&article.date)
+                                                        .small()
+                                                        .color(weak),
+                                                )
+                                                .truncate(),
+                                            );
                                         });
                                         // Categories
                                         ui.allocate_ui(egui::vec2(cw[2], row_h), |ui| {
                                             ui.set_min_size(egui::vec2(cw[2], row_h));
-                                            ui.add(egui::Label::new(
-                                                egui::RichText::new(&article.categories)
-                                                    .small()
-                                                    .color(weak),
-                                            ).truncate());
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(&article.categories)
+                                                        .small()
+                                                        .color(weak),
+                                                )
+                                                .truncate(),
+                                            );
                                         });
                                         // Tags
                                         ui.allocate_ui(egui::vec2(cw[3], row_h), |ui| {
                                             ui.set_min_size(egui::vec2(cw[3], row_h));
-                                            ui.add(egui::Label::new(
-                                                egui::RichText::new(article.tags.join(", "))
-                                                    .small()
-                                                    .background_color(tag_bg),
-                                            ).truncate());
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(article.tags.join(", "))
+                                                        .small()
+                                                        .background_color(tag_bg),
+                                                )
+                                                .truncate(),
+                                            );
                                         });
                                         // Status
                                         ui.allocate_ui(egui::vec2(cw[4], row_h), |ui| {
@@ -446,12 +526,16 @@ impl HugoApp {
                                                 egui::RichText::new(" Draft ")
                                                     .small()
                                                     .color(egui::Color32::from_rgb(161, 98, 7))
-                                                    .background_color(egui::Color32::from_rgb(254, 243, 199))
+                                                    .background_color(egui::Color32::from_rgb(
+                                                        254, 243, 199,
+                                                    ))
                                             } else {
                                                 egui::RichText::new(" Published ")
                                                     .small()
                                                     .color(egui::Color32::from_rgb(21, 128, 61))
-                                                    .background_color(egui::Color32::from_rgb(220, 252, 231))
+                                                    .background_color(egui::Color32::from_rgb(
+                                                        220, 252, 231,
+                                                    ))
                                             }));
                                         });
                                         // Actions
@@ -495,13 +579,17 @@ impl HugoApp {
                                                 {
                                                     // Only open .md files within the project
                                                     let article_path = &article.path;
-                                                    let is_md = article_path.extension()
+                                                    let is_md = article_path
+                                                        .extension()
                                                         .map_or(false, |ext| ext == "md");
                                                     let is_in_project = article_path
                                                         .canonicalize()
                                                         .ok()
                                                         .and_then(|p| {
-                                                            self.project_path.canonicalize().ok().map(|base| p.starts_with(base))
+                                                            self.project_path
+                                                                .canonicalize()
+                                                                .ok()
+                                                                .map(|base| p.starts_with(base))
                                                         })
                                                         .unwrap_or(false);
                                                     if is_md && is_in_project {
@@ -569,7 +657,10 @@ impl HugoApp {
                         let can_prev = self.articles_page > 0;
 
                         if ui
-                            .add_enabled(can_next, egui::Button::new("\u{25B6}").rounding(btn_rounding))
+                            .add_enabled(
+                                can_next,
+                                egui::Button::new("\u{25B6}").rounding(btn_rounding),
+                            )
                             .on_hover_text("Next page")
                             .clicked()
                         {
@@ -586,7 +677,10 @@ impl HugoApp {
                         );
 
                         if ui
-                            .add_enabled(can_prev, egui::Button::new("\u{25C0}").rounding(btn_rounding))
+                            .add_enabled(
+                                can_prev,
+                                egui::Button::new("\u{25C0}").rounding(btn_rounding),
+                            )
                             .on_hover_text("Previous page")
                             .clicked()
                         {
@@ -613,12 +707,12 @@ impl HugoApp {
         // Title 5fr, Date 4fr, Categories 3fr, Tags 5fr = 17fr total
         let fr = flex_total / 17.0;
         [
-            fr * 5.0,    // Title
-            fr * 4.0,    // Date
-            fr * 3.0,    // Categories
-            fr * 5.0,    // Tags
-            status_w,    // Status (fixed)
-            actions_w,   // Actions (fixed)
+            fr * 5.0,  // Title
+            fr * 4.0,  // Date
+            fr * 3.0,  // Categories
+            fr * 5.0,  // Tags
+            status_w,  // Status (fixed)
+            actions_w, // Actions (fixed)
         ]
     }
 
@@ -1090,12 +1184,11 @@ impl HugoApp {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Site Settings").heading());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let save_btn = egui::Button::new(
-                    egui::RichText::new("\u{1F4BE}  Save Settings").color(white),
-                )
-                .fill(blue)
-                .rounding(btn_rounding)
-                .min_size(egui::vec2(140.0, 32.0));
+                let save_btn =
+                    egui::Button::new(egui::RichText::new("\u{1F4BE}  Save Settings").color(white))
+                        .fill(blue)
+                        .rounding(btn_rounding)
+                        .min_size(egui::vec2(140.0, 32.0));
                 if ui.add(save_btn).clicked() {
                     match self.config.save(&self.project_path) {
                         Ok(_) => {
@@ -1125,8 +1218,7 @@ impl HugoApp {
                     .show(ui, |ui| {
                         ui.label("Site Title:");
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.config.title)
-                                .desired_width(300.0),
+                            egui::TextEdit::singleline(&mut self.config.title).desired_width(300.0),
                         );
                         ui.end_row();
 
@@ -1194,7 +1286,7 @@ impl HugoApp {
             Some(p) => p,
             None => {
                 self.show_error_with_message(
-                    "Hugo not found in system PATH. Please install Hugo first.",
+                    "Hugo not found. Please set Hugo path in Project Overview or install Hugo.",
                 );
                 return;
             }
@@ -1220,8 +1312,15 @@ impl HugoApp {
     }
 
     fn find_hugo_exe(&self) -> Option<String> {
-        // Only trust hugo from system PATH, never from project directory.
-        // Must return an absolute path to prevent current_dir hijacking.
+        // First check if user has configured a custom hugo path
+        if !self.hugo_path.is_empty() {
+            let path = std::path::Path::new(&self.hugo_path);
+            if path.exists() {
+                return Some(self.hugo_path.clone());
+            }
+        }
+
+        // Then try to find hugo from system PATH
         if let Ok(output) = std::process::Command::new("where").arg("hugo").output() {
             if output.status.success() {
                 let path_str = String::from_utf8_lossy(&output.stdout);
@@ -1235,7 +1334,10 @@ impl HugoApp {
                         .canonicalize()
                         .ok()
                         .and_then(|hp| {
-                            self.project_path.canonicalize().ok().map(|pp| hp.starts_with(pp))
+                            self.project_path
+                                .canonicalize()
+                                .ok()
+                                .map(|pp| hp.starts_with(pp))
                         })
                         .unwrap_or(false);
                     if !is_in_project {
@@ -1245,8 +1347,6 @@ impl HugoApp {
             }
         }
 
-        // No safe hugo found — do NOT fall back to bare "hugo"
-        // (Windows would resolve it via current_dir, enabling hijack)
         None
     }
 
@@ -1255,27 +1355,29 @@ impl HugoApp {
             Some(p) => p,
             None => {
                 self.show_error_with_message(
-                    "Hugo not found in system PATH. Please install Hugo first.",
+                    "Hugo not found. Please set Hugo path in Project Overview or install Hugo.",
                 );
                 return;
             }
         };
-        match std::process::Command::new(&hugo_path)
-            .current_dir(&self.project_path)
-            .output()
-        {
-            Ok(output) => {
-                if output.status.success() {
-                    self.status_message = "Site built successfully".to_string();
-                } else {
-                    let error = String::from_utf8_lossy(&output.stderr);
-                    self.show_error_with_message(&format!("Build failed: {}", error));
+        let path = self.project_path.clone();
+
+        std::thread::spawn(move || {
+            match std::process::Command::new("cmd")
+                .args(["/C", "start", "", &hugo_path])
+                .current_dir(&path)
+                .spawn()
+            {
+                Ok(child) => {
+                    let _ = child.wait_with_output();
+                }
+                Err(e) => {
+                    eprintln!("Failed to build site: {}", e);
                 }
             }
-            Err(e) => {
-                self.show_error_with_message(&format!("Failed to run hugo: {}", e));
-            }
-        }
+        });
+
+        self.status_message = "Building site...".to_string();
     }
 
     fn select_project_path(&mut self) {
@@ -1307,6 +1409,7 @@ impl HugoApp {
                 self.status_message =
                     format!("Folder selected (no Hugo config found): {}", path.display());
             }
+            self.save_app_settings();
         }
     }
 
@@ -1332,13 +1435,11 @@ impl eframe::App for HugoApp {
                 ];
                 for (tab, label) in tabs {
                     let is_active = self.current_tab == tab;
-                    let btn = egui::Button::new(
-                        egui::RichText::new(label).color(if is_active {
-                            egui::Color32::WHITE
-                        } else {
-                            egui::Color32::BLACK
-                        }),
-                    )
+                    let btn = egui::Button::new(egui::RichText::new(label).color(if is_active {
+                        egui::Color32::WHITE
+                    } else {
+                        egui::Color32::BLACK
+                    }))
                     .fill(if is_active {
                         tab_blue
                     } else {
@@ -1364,25 +1465,19 @@ impl eframe::App for HugoApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if !self.status_message.is_empty() {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(16, 185, 129),
-                            "\u{2713}",
-                        );
+                        ui.colored_label(egui::Color32::from_rgb(16, 185, 129), "\u{2713}");
                         ui.label(&self.status_message);
                     }
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Project Path: {}",
-                                    self.project_path.display()
-                                ))
-                                .small()
-                                .color(ui.visuals().weak_text_color()),
-                            );
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Project Path: {}",
+                                self.project_path.display()
+                            ))
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                        );
+                    });
                 });
             });
 
@@ -1395,11 +1490,11 @@ impl eframe::App for HugoApp {
         egui::CentralPanel::default()
             .frame(central_frame)
             .show(ctx, |ui| match self.current_tab {
-            Tab::Dashboard => self.show_dashboard(ui),
-            Tab::Articles => self.show_articles(ui),
-            Tab::Themes => self.show_themes(ui),
-            Tab::Settings => self.show_settings(ui),
-        });
+                Tab::Dashboard => self.show_dashboard(ui),
+                Tab::Articles => self.show_articles(ui),
+                Tab::Themes => self.show_themes(ui),
+                Tab::Settings => self.show_settings(ui),
+            });
 
         // Error dialog
         if self.show_error {

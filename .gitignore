@@ -15,6 +15,7 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 desktop.ini
+nul
 
 # Hugo build output (if project is also a Hugo site)
 /public/
@@ -29,3 +30,6 @@ desktop.ini
 
 # Temporary files from atomic config save
 *.yaml.tmp
+
+# App config
+config/
