@@ -184,6 +184,24 @@ impl HugoConfig {
             serde_yaml::Value::String("title".to_string()),
             serde_yaml::Value::String(self.title.clone()),
         );
+
+        // Also update language-specific title to keep them in sync
+        if let Some(languages) = yaml
+            .get_mut("languages")
+            .and_then(|v| v.as_mapping_mut())
+        {
+            if let Some(lang) = languages.get_mut(&serde_yaml::Value::String(
+                self.default_language.clone(),
+            )) {
+                if let Some(lang_map) = lang.as_mapping_mut() {
+                    lang_map.insert(
+                        serde_yaml::Value::String("title".to_string()),
+                        serde_yaml::Value::String(self.title.clone()),
+                    );
+                }
+            }
+        }
+
         yaml.insert(
             serde_yaml::Value::String("copyright".to_string()),
             serde_yaml::Value::String(self.copyright.clone()),

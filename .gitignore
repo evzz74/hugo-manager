@@ -31,5 +31,5 @@ nul
 # Temporary files from atomic config save
 *.yaml.tmp
 
-# App config
+# App config (contains absolute user paths)
 config/

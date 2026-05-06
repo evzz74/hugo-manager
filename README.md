@@ -2,6 +2,10 @@
 
 一个使用 Rust 和 egui 构建的 Hugo 博客管理桌面应用。
 
+## 最近更新
+
+- **多语言 Title 同步**：在 Settings 中修改 Site Title 时，会自动同步更新 `languages.<default_language>.title`，保持多语言配置中的标题一致
+
 ## 功能特性
 
 ### Dashboard
